@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
+from datetime import timedelta
 
-from dotenv import load_dotenv
 from googleapiclient.discovery import build
 
 from sqlalchemy import create_engine
@@ -77,5 +77,6 @@ def get_session():
 
 
 def get_formatted_datetime(time):
-    formatted_str = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_time = time + timedelta(seconds=1)
+    formatted_str = new_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     return formatted_str
