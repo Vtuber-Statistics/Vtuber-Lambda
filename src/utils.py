@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+
 load_dotenv(verbose=True)
 
 vtuber_name_infos = [
@@ -73,3 +74,8 @@ def get_session():
     Session = sessionmaker(bind=engine)
     session = Session()
     return session
+
+
+def get_formatted_datetime(time):
+    formatted_str = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return formatted_str
