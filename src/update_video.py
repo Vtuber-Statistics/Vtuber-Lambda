@@ -1,20 +1,24 @@
 from model import Channel, Video
-from utils import get_youtube_data_api, get_session
+from utils import get_youtube_data_api, get_session, get_formatted_datetime
 from sqlalchemy.sql import func
 
 
 # 버튜버 채널 정보 업데이트
-def update_video():
+def insert_all_live_video():
     channel_id_info = get_all_channel_id_info()
     for channel_id, youtube_api_channel_id in channel_id_info:
-        live_video_infos = get_youtube_live_video_infos(
+        new_live_video_infos = get_new_youtube_live_video_infos(
             channel_id, youtube_api_channel_id
         )
 
-        print(live_video_infos)
-        print(len(live_video_infos))
+        all_youtube_video_data = get_all_youtube_video_data(new_live_video_infos)
 
-        return
+        for youtube_video_data in all_youtube_video_data:
+            update_video_data(youtube_video_data)
+
+        print(f"channel_id: {channel_id}")
+        print(f"total_count: {len(all_youtube_video_data)}")
+        print("Success update vtuber video info\n")
 
 
 # 모든 채널 정보(채널 ID, 유튜브 채널 ID) 반환
@@ -55,31 +59,32 @@ def get_last_video_published_time(channel_id):
     return (
         "2000-01-01T00:00:00Z"
         if last_video_published_time is None
-        else last_video_published_time
+        else get_formatted_datetime(last_video_published_time)
     )
 
 
 # 영상 정보 추출
-def get_filtered_video_info(video_info):
+def get_filtered_video_info(video_info, channel_id):
     youtube_api_video_id = video_info["id"]["videoId"]
     snippet = video_info["snippet"]
     filtered_video_info = {
         "title": snippet["title"],
         "video_url": snippet["title"],
-        "thumbnail_url": snippet["thumbnails"]["high"],
+        "thumbnail_url": snippet["thumbnails"]["high"]["url"],
         "created_at": snippet["publishTime"],
         "youtube_api_video_id": youtube_api_video_id,
+        "channel_id": channel_id,
     }
 
     return filtered_video_info
 
 
-# 유튜브 채널 ID와 시간 기준으로 유튜브 비디오들의 정보를 반환
-def get_youtube_live_video_infos(channel_id, youtube_channel_id):
+# 최근에 업로드된 유튜브 라이브 영상들의 정보를 반환
+# 처음으로 저장하는 것이라면 전부 저장함
+def get_new_youtube_live_video_infos(channel_id, youtube_channel_id):
     youtube_data_api = get_youtube_data_api()
 
     last_video_published_time = get_last_video_published_time(channel_id)
-    print(last_video_published_time)
 
     video_infos = []
     next_page_token = None
@@ -97,7 +102,6 @@ def get_youtube_live_video_infos(channel_id, youtube_channel_id):
                 type="video",
                 order="date",
                 publishedAfter=last_video_published_time,
-                # publishedAfter="2023-08-27T14:17:06Z",
                 maxResults=50,
                 pageToken=next_page_token,
             )
@@ -110,35 +114,56 @@ def get_youtube_live_video_infos(channel_id, youtube_channel_id):
             break
 
     filtered_video_infos = [
-        get_filtered_video_info(video_info) for video_info in video_infos
+        get_filtered_video_info(video_info, channel_id) for video_info in video_infos
     ]
 
     return filtered_video_infos
 
 
-# 유튜브 채널 ID로 채 검색
-# def get_youtube_channel_data(vtuber_name, youtube_api_channel_id):
-#     youtube_data_api = get_youtube_data_api()
+def get_all_youtube_video_data(video_infos):
+    youtube_data_api = get_youtube_data_api()
 
-#     channel_response = (
-#         youtube_data_api.channels()
-#         .list(id=youtube_api_channel_id, part="snippet,statistics", maxResults=1)
-#         .execute()
-#     )
-#     channel_info = channel_response["items"][0]["snippet"]
-#     channel_statistics = channel_response["items"][0]["statistics"]
+    all_video_data = []
+    try:
+        for i in range(len(video_infos) - 1, -1, -1):
+            video_info = video_infos[i]
+            search_response = (
+                youtube_data_api.videos()
+                .list(part="statistics", id=video_info["youtube_api_video_id"])
+                .execute()
+            )
+            video_statistics = search_response["items"][0]["statistics"]
+            video_info["is_live"] = True
+            video_info["view_count"] = video_statistics["viewCount"]
+            video_info["like_count"] = video_statistics["likeCount"]
+            video_info["comment_count"] = (
+                video_statistics["commentCount"]
+                if "commentCount" in video_statistics
+                else 0
+            )
 
-#     channel_data = {
-#         "vtuber_name": vtuber_name,
-#         "group": "hololive",  # 추후 수정
-#         "country": channel_info["country"],
-#         "channel_name": channel_info["title"],
-#         "custom_url": channel_info["customUrl"],
-#         "thumbnail_url": channel_info["thumbnails"]["medium"]["url"],
-#         "created_at": channel_info["publishedAt"],
-#         "subscriber_count": channel_statistics["subscriberCount"],
-#         "total_view_count": channel_statistics["viewCount"],
-#         "video_count": channel_statistics["videoCount"],
-#         "youtube_api_channel_id": youtube_api_channel_id,
-#     }
-#     return channel_data
+            all_video_data.append(video_info)
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        print(video_statistics)
+
+    return all_video_data
+
+
+# Video DB Update
+def update_video_data(youtube_video_data):
+    try:
+        session = get_session()
+
+        new_video = Video(**youtube_video_data)
+        session.add(new_video)
+
+        session.commit()
+
+    except Exception as e:
+        session.rollback()
+        print(f"Error: {str(e)}")
+
+    finally:
+        session.close()
